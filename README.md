@@ -118,7 +118,7 @@ We need to do the following:
 Unfortunately, as the stack grows "downward" towards `0x0` and we have very little room in the string area, any additions will invalidate all pointers. Hence, we need to reshuffle and rewrite everything.
 
 > [!NOTE]  
-> While the kernel adds alignment and padding bytes in various functions; in practice, we do not need to preserve these. We simply need to ensure that all pointers are aligned to 8-byte boundaries.
+> While the kernel adds alignment and padding bytes inside of the string area, we do not need to preserve these. We simply need to ensure that all pointers are aligned to 8-byte boundaries.
 
 In the demo, `sReadStack()` parses the contents of the stack and builds a `Stack` structure. We add our new environmental variables to this structure in `sModifyStack()`. We then write the structure back to the stack in `sWriteStack()`.
 
@@ -134,8 +134,7 @@ Prior to macOS Sonoma 14.4, we could use `thread_set_state()` to update the `sp`
 
 Saagar works around this by patching `_dyld_start`, located in [dyldStartup.s](https://github.com/apple-oss-distributions/dyld/blob/dyld-1165.3/dyld/dyldStartup.s). The original arm64 assembly code of this function is as follows:
 
-```asm
-
+```text
 __dyld_start:
     mov  x0, sp        // get pointer to KernelArgs into parameter register
     and  sp, x0, #~15  // force 16-byte alignment of stack
