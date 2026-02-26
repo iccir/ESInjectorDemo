@@ -84,7 +84,7 @@ Before launch, the kernel allocates a region of memory to be used as the stack s
 
 In visual form:
 
-![Diagram showing how the stack pointer works](Docs/stack.png)
+<img alt="Diagram showing the stack region" src="Docs/stack.png" width=700>
 
 We are interested in the purple area, which was configured in `exec_mach_imgact()` in [kern_exec.c](https://github.com/apple-oss-distributions/xnu/blob/xnu-10063.141.1/bsd/kern/kern_exec.c).
 
@@ -102,11 +102,11 @@ Starting from the stack pointer, it contains:
 
 In visual form:
 
-<img alt="Hexdump with pointer area annotations" src="Docs/hexdump1.png" width=1010>
+<img alt="Hexdump with pointer area annotations" src="Docs/hexdump1.png" width=720>
 
 The string area is a bit messy. It has evolved over time and is filled across various kernel functions (`exec_copyout_strings()`, `exec_add_user_string()`, `exec_save_path()`, etc.). Various sub-areas have been aligned with padding, and `applev[0]` ends up prepended before `argv[0]`:
 
-![Hexdump with string area annotations](Docs/hexdump2.png)
+<img alt="Hexdump with string area annotations" src="Docs/hexdump1.png" width=720>
 
 ---
 
@@ -122,9 +122,9 @@ Unfortunately, as the stack grows "downward" towards `0x0` and we have very litt
 
 In the demo, `sReadStack()` parses the contents of the stack and builds a `Stack` structure. We add our new environmental variables to this structure in `sModifyStack()`. We then write the structure back to the stack in `sWriteStack()`.
 
-![Hexdump with pointer area annotations](Docs/hexdump3.png)
+<img alt="Hexdump with pointer area annotations" src="Docs/hexdump3.png" width=720>
 
-![Hexdump with string area annotations](Docs/hexdump4.png)
+<img alt="Hexdump with string area annotations" src="Docs/hexdump4.png" width=720>
 
 Due to the added variables, our new stack pointer is `0x16dde7c90` instead of `0x16dde7ce0`, a difference of 80 bytes.
 
