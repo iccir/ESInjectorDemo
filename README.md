@@ -71,14 +71,14 @@ In both cases, you will need to run DemoApp manually. In testing, I found it val
 
 ## Methodology
 
-Our goal is to add the `DYLD_INSERT_LIBRARIES=/path/to/DemoPayload.dylid` environment variable to the DemoApp process and let `dyld` perform the actual injection/interposing.
+Our goal is to add the `DYLD_INSERT_LIBRARIES=/path/to/DemoPayload.dylib` environment variable to the DemoApp process and let `dyld` perform the actual injection/interposing.
 
 We will also need to set the `DYLD_SHARED_REGION=1` to disable "dyld-in-cache".
 
 We will use the [Endpoint Security framework](https://developer.apple.com/documentation/endpointsecurity?language=objc) to register for the `ES_EVENT_TYPE_AUTH_EXEC` event. This will prevent any execution in the newly-spawned process until we respond with `ES_AUTH_RESULT_ALLOW`.
 
 
-### Tweaking the Stack
+### Modifying the Stack
 
 Before launch, the kernel allocates a region of memory to be used as the stack space for the main thread. It then places program arguments, environment variables, and platform-specific variables at the end of this region. The stack pointer (SP) is placed before this area and moves towards memory address `0x0` as the stack grows.
 
@@ -102,7 +102,7 @@ Starting from the stack pointer, it contains:
 
 In visual form:
 
-![Hexdump with pointer area annotations](Docs/hexdump1.png)
+<img alt="Hexdump with pointer area annotations" src="Docs/hexdump1.png" width=1010>
 
 The string area is a bit messy. It has evolved over time and is filled across various kernel functions (`exec_copyout_strings()`, `exec_add_user_string()`, `exec_save_path()`, etc.). Various sub-areas have been aligned with padding, and `applev[0]` ends up prepended before `argv[0]`:
 
@@ -120,7 +120,7 @@ Unfortunately, as the stack grows "downward" towards `0x0` and we have very litt
 > [!NOTE]  
 > While the kernel adds alignment and padding bytes in various functions; in practice, we do not need to preserve these. We simply need to ensure that all pointers are aligned to 8-byte boundaries.
 
-In the demo, `sReadStack()` parses the contents of the stack and builds a `Stack` structure. We add our new environmental variables to this structure in `sTweakStack()`. We then write the structure back to the stack in `sWriteStack()`.
+In the demo, `sReadStack()` parses the contents of the stack and builds a `Stack` structure. We add our new environmental variables to this structure in `sModifyStack()`. We then write the structure back to the stack in `sWriteStack()`.
 
 ![Hexdump with pointer area annotations](Docs/hexdump3.png)
 
@@ -128,7 +128,7 @@ In the demo, `sReadStack()` parses the contents of the stack and builds a `Stack
 
 Due to the added variables, our new stack pointer is `0x16dde7c90` instead of `0x16dde7ce0`, a difference of 80 bytes.
 
-### Modifying the Stack Pointer
+### Updating the Stack Pointer
 
 Prior to macOS Sonoma 14.4, we could use `thread_set_state()` to update the `sp` register. Unfortunately, Apple now prevents this (*sigh*).
 
@@ -144,7 +144,7 @@ __dyld_start:
     b    start
 ```
 
-As Saagar notes, `fp` and `lr` are initialized to `0` by the kernel. This gives us 2 instructions worth of wiggle-room. Additionally, in `sTweakStack()`, we already align `sp` to a 16-byte boundary, giving us an extra instruction.
+As Saagar notes, `fp` and `lr` are initialized to `0` by the kernel. This gives us 2 instructions worth of wiggle-room. Additionally, in `sModifyStack()`, we already align `sp` to a 16-byte boundary, giving us an extra instruction.
 
 We need to move `sp` downwards by 80 bytes. To do this, we can simply replace the first two instructions:
 
