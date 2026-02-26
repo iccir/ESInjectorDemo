@@ -106,7 +106,7 @@ In visual form:
 
 The string area is a bit messy. It has evolved over time and is filled across various kernel functions (`exec_copyout_strings()`, `exec_add_user_string()`, `exec_save_path()`, etc.). Various sub-areas have been aligned with padding, and `applev[0]` ends up prepended before `argv[0]`:
 
-<img alt="Hexdump with string area annotations" src="Docs/hexdump1.png" width=720>
+<img alt="Hexdump with string area annotations" src="Docs/hexdump2.png" width=720>
 
 ---
 
