@@ -32,9 +32,11 @@ sudo defaults write \
 ```
 
 > [!CAUTION]
-> **By using the code in this repository, you agree to take full responsibility for your now-increased attack surface.**
+> **By using the code in this repository, you agree to take full responsibility for your now-greatly-increased attack surface.**
+>
+> As Saagar mentions [on his gist](https://gist.github.com/saagarjha/a70d44951cb72f82efee3317d80ac07f?permalink_comment_id=5996605#gistcomment-5996605) and [in a post](https://mastodon.social/@saagar@saagarjha.com/116133453356639960), turning off any part of SIP enables trivial escalation to root. This means that your sole form of defense is **not running malicious code**. 
 > 
-> In practice, this means: don't run software from untrusted sources, audit all dependencies installed by package managers, and monitor security feeds for major exploits.
+> Hence, don't run software from untrusted sources, be extremely careful of all dependencies installed by package managers, and monitor security feeds for major exploits.
 
 
 #### Injection into System Binaries
@@ -115,18 +117,20 @@ We need to do the following:
 - Modify the string area to add our `DYLD_INSERT_LIBRARIES` and `DYLD_SHARED_REGION` environment variables.
 - Add pointers to `envp[]` for the added variables.
 
-Unfortunately, as the stack grows "downward" towards `0x0` and we have very little room in the string area, any additions will invalidate all pointers. Hence, we need to reshuffle and rewrite everything.
+Unfortunately, we are very limited in space and cannot easily add new values. We need to plan on rewriting the string area and rebuilding the pointer lists.
 
 > [!NOTE]  
 > While the kernel adds alignment and padding bytes inside of the string area, we do not need to preserve these. We simply need to ensure that all pointers are aligned to 8-byte boundaries.
 
 In the demo, `sReadStack()` parses the contents of the stack and builds a `Stack` structure. We add our new environmental variables to this structure in `sModifyStack()`. We then write the structure back to the stack in `sWriteStack()`.
 
+Here's our updated memory:
+
 <img alt="Hexdump with pointer area annotations" src="Docs/hexdump3.png" width=720>
 
 <img alt="Hexdump with string area annotations" src="Docs/hexdump4.png" width=720>
 
-Due to the added variables, our new stack pointer is `0x16dde7c90` instead of `0x16dde7ce0`, a difference of 80 bytes.
+Note that due to the added variables, our new stack pointer is `0x16dde7c90` instead of `0x16dde7ce0`, a difference of 80 bytes.
 
 ### Updating the Stack Pointer
 
