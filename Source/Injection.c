@@ -4,7 +4,7 @@
     SPDX-License-Identifier: LGPL-3.0-only
 */
 
-#include "Inject.h"
+#include "Injection.h"
 
 #include <sys/sysctl.h>
 #include <sys/errno.h>

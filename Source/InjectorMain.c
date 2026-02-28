@@ -12,7 +12,7 @@
 #include <assert.h>
 #include <string.h>
 
-#include "Inject.h"
+#include "Injection.h"
 
 static void sLog(FILE * f, char *format, ...)
 {

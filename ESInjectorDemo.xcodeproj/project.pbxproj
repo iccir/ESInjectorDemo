@@ -9,7 +9,7 @@
 /* Begin PBXBuildFile section */
 		5506741F2F48E1F500D901C7 /* DemoApp.m in Sources */ = {isa = PBXBuildFile; fileRef = 5506741E2F48E1F500D901C7 /* DemoApp.m */; };
 		550674222F48E22300D901C7 /* DemoPayload.m in Sources */ = {isa = PBXBuildFile; fileRef = 550674212F48E22300D901C7 /* DemoPayload.m */; };
-		550674272F48E24500D901C7 /* Inject.c in Sources */ = {isa = PBXBuildFile; fileRef = 550674252F48E24500D901C7 /* Inject.c */; };
+		550674272F48E24500D901C7 /* Injection.c in Sources */ = {isa = PBXBuildFile; fileRef = 550674252F48E24500D901C7 /* Injection.c */; };
 		550674282F48E24500D901C7 /* InjectorMain.c in Sources */ = {isa = PBXBuildFile; fileRef = 550674262F48E24500D901C7 /* InjectorMain.c */; };
 /* End PBXBuildFile section */
 
@@ -49,8 +49,8 @@
 		550674062F423B0100D901C7 /* DemoPayload.dylib */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.dylib"; includeInIndex = 0; path = DemoPayload.dylib; sourceTree = BUILT_PRODUCTS_DIR; };
 		5506741E2F48E1F500D901C7 /* DemoApp.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; name = DemoApp.m; path = Source/DemoApp.m; sourceTree = "<group>"; };
 		550674212F48E22300D901C7 /* DemoPayload.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; name = DemoPayload.m; path = Source/DemoPayload.m; sourceTree = "<group>"; };
-		550674242F48E24500D901C7 /* Inject.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = Inject.h; path = Source/Inject.h; sourceTree = "<group>"; };
-		550674252F48E24500D901C7 /* Inject.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; name = Inject.c; path = Source/Inject.c; sourceTree = "<group>"; };
+		550674242F48E24500D901C7 /* Injection.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = Injection.h; path = Source/Injection.h; sourceTree = "<group>"; };
+		550674252F48E24500D901C7 /* Injection.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; name = Injection.c; path = Source/Injection.c; sourceTree = "<group>"; };
 		550674262F48E24500D901C7 /* InjectorMain.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; name = InjectorMain.c; path = Source/InjectorMain.c; sourceTree = "<group>"; };
 		550674292F48E25000D901C7 /* Injector.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; name = Injector.entitlements; path = Resources/Injector.entitlements; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -121,8 +121,8 @@
 			isa = PBXGroup;
 			children = (
 				550674292F48E25000D901C7 /* Injector.entitlements */,
-				550674242F48E24500D901C7 /* Inject.h */,
-				550674252F48E24500D901C7 /* Inject.c */,
+				550674242F48E24500D901C7 /* Injection.h */,
+				550674252F48E24500D901C7 /* Injection.c */,
 				550674262F48E24500D901C7 /* InjectorMain.c */,
 			);
 			name = Injector;
@@ -256,7 +256,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				550674272F48E24500D901C7 /* Inject.c in Sources */,
+				550674272F48E24500D901C7 /* Injection.c in Sources */,
 				550674282F48E24500D901C7 /* InjectorMain.c in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
