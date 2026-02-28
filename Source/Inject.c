@@ -223,6 +223,7 @@ static void sFreeList(StackList *list)
         free(list->strings[i].buffer);
     }
     
+    free(list->strings);
     free(list);
 }
 
@@ -236,6 +237,8 @@ static Stack *sCreateStack(void)
 
 static void sFreeStack(Stack *stack)
 {
+    if (!stack) return;
+
     sFreeList(stack->argvList);
     sFreeList(stack->envpList);
     sFreeList(stack->applevList);
