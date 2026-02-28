@@ -6,13 +6,27 @@
 
 #include <sys/types.h>
 #include <stdbool.h>
-#include <os/log.h>
 
-void SetLogger(os_log_t logger);
-void LogInfo(char *format, ...);
-void LogError(char *format, ...);
 
-boolean_t InjectIntoProcess(
+// Logging is a complicated mess on macOS.
+//
+// Although os_log() is suppose to be the preferred solution, it lacks basic
+// functionality like va_list support or redirection to stdout/stderr.
+//
+// Hence, everybody writes their own wrappers.
+//
+typedef enum {
+    InjectionLogLevelDebug,   // arm64 register information, hex dumps
+    InjectionLogLevelDefault, // Information about what the injector is doing
+    InjectionLogLevelError    // Errors
+} InjectionLogLevel;
+
+typedef void (^InjectionLogCallback)(InjectionLogLevel level, const char *format, ...);
+
+void InjectionSetLogCallback(InjectionLogCallback callback);
+
+// Perform actual injection
+bool InjectionInjectIntoProcess(
     pid_t       pid,
     const char *dyldLibraryPath,
     const char *dyldFrameworkPath,

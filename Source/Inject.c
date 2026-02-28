@@ -17,6 +17,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <ctype.h>
 
 
 // The current code adds a maximum of 4 environment variables to the stack.
@@ -40,57 +41,24 @@
 
 #pragma mark - Logging
 
-char sLogBuffer[1024];
+static InjectionLogCallback sLogCallback = NULL;
 
-static os_log_t sLogger = NULL;
+#define LogDebug(...) __extension__({ \
+    if (sLogCallback) sLogCallback(InjectionLogLevelDebug, ##__VA_ARGS__); \
+})
 
-boolean_t sShouldLogInfo(void)
-{
-    return !sLogger || os_log_type_enabled(sLogger, OS_LOG_TYPE_INFO);
-}
+#define Log(...) __extension__({ \
+    if (sLogCallback) sLogCallback(InjectionLogLevelDefault, ##__VA_ARGS__); \
+})
 
-
-void LogInfo(char *format, ...)
-{
-    if (!sShouldLogInfo()) return;
-
-    va_list v;
-    va_start(v, format);
-    
-    vsnprintf(sLogBuffer, sizeof(sLogBuffer), format, v);
-
-    if (sLogger) {
-        os_log_info(sLogger, "%s", sLogBuffer);
-    } else {
-        fprintf(stdout, "%s\n", sLogBuffer);
-    }
-
-    va_end(v);
-}
-
-
-void LogError(char *format, ...)
-{
-    if (sLogger && !os_log_type_enabled(sLogger, OS_LOG_TYPE_ERROR)) return;
-
-    va_list v;
-    va_start(v, format);
-    
-    vsnprintf(sLogBuffer, sizeof(sLogBuffer), format, v);
-    
-    if (sLogger) {
-        os_log_error(sLogger, "%s", sLogBuffer);
-    } else {
-        fprintf(stderr, "%s\n", sLogBuffer);
-    }
-
-    va_end(v);
-}
+#define LogError(...) __extension__({ \
+    if (sLogCallback) sLogCallback(InjectionLogLevelError, ##__VA_ARGS__); \
+})
 
 
 void sLogThreadState(const arm_thread_state64_t *state)
 {
-    LogInfo(
+    LogDebug(
         "Thread State:\n"
         "   x0: 0x%016llx   x1: 0x%016llx   x2: 0x%016llx   x3: 0x%016llx\n"
         "   x4: 0x%016llx   x5: 0x%016llx   x6: 0x%016llx   x7: 0x%016llx\n"
@@ -118,62 +86,50 @@ void sLogThreadState(const arm_thread_state64_t *state)
 }
 
 
-static void sLogHexDump(vm_address_t address, const void *data, size_t size)
+static void sLogHexDump(const vm_address_t address, const void *data, size_t size)
 {
-    if (!sShouldLogInfo()) return;
+    // 3 bytes per hex value + middle space + terminator
+    const size_t hexStringLength = (3 * 16) + 1 + 1;
 
-    const unsigned char *bytes = (const unsigned char *)data;
+    // 16 bytes per line + terminator
+    const size_t asciiStringLength = 16 + 1;
 
-    __block size_t offset       = 0;
-    size_t length = 1024;
-    char *line = alloca(length);
+    char hexString[hexStringLength];
+    char asciiString[asciiStringLength];
 
-    __auto_type append = ^(char *format, ...) {
-        if (offset > length) return;
+    static const char nibbleLookup[] = "0123456789abcdef";
 
-        va_list v;
-        va_start(v, format);
-        offset += vsnprintf(line + offset, length - offset, format, v);
-        va_end(v);
-    };
+    for (size_t offset = 0; offset < size; offset += 16) {
+        size_t rowLength = MIN(size - offset, 16);
 
-    for (size_t i = 0; i < size; i += 16) {
-        offset = 0;
+        char *h = hexString;
+        char *a = asciiString;
 
-        // Print offset in first column
-        append("%016lx  ", address + i);
+        for (size_t i = 0; i < 16; i++) {
+            if (i == 8) {
+                *h++ = ' ';
+            }
 
-        // Print hex bytes in middle area
-        for (size_t j = 0; j < 16; j++) {
-            if (i + j < size) {
-                append("%02x ", bytes[i + j]);
+            if (i < rowLength) {
+                uint8_t b = ((uint8_t *)data)[offset + i];
+
+                *h++ = nibbleLookup[(b >> 4) & 0xf];
+                *h++ = nibbleLookup[ b       & 0xf];
+                *a++ = isprint(b) ? b : '.';
+
             } else {
-                append("   ");
-            }
-
-            if (j == 7) {
-                append(" ");
-            }
-        }
-
-        // Print ASCII area
-        {
-            append(" |");
-            size_t j;
-
-            for (j = 0; j < 16 && i + j < size; j++) {
-                unsigned char c = bytes[i + j];
-                append("%c", (c >= 0x20 && c < 0x7f) ? c : '.');
+                *h++ = ' ';
+                *h++ = ' ';
+                *a++ = ' ';
             }
             
-            for ( ; j < 16; j++) {
-                append(" ");
-            }
-            
-            append("|");
+            *h++ = ' ';
         }
 
-        LogInfo("%s", line);
+        hexString[  hexStringLength   - 1] = 0;
+        asciiString[asciiStringLength - 1] = 0;
+
+        LogDebug("0x%016lx  %s |%s|\n", (unsigned long)address + offset, hexString, asciiString);
     }
 }
 
@@ -270,7 +226,7 @@ static void sListIterateStrings(StackList *list, void (^callback)(StackString *s
 /*
     Writes a buffer of memory to the remote task
 */
-static boolean_t sWriteBuffer(task_t task, vm_address_t address, const void *buffer, size_t size)
+static bool sWriteBuffer(task_t task, vm_address_t address, const void *buffer, size_t size)
 {
     kern_return_t err = KERN_SUCCESS;
     
@@ -303,7 +259,7 @@ static boolean_t sWriteBuffer(task_t task, vm_address_t address, const void *buf
     Writes our amfi_check_dyld_policy_self() patch.
     This ensures that AMFI_DYLD_OUTPUT_ALLOW_LIBRARY_INTERPOSING is enabled.
 */
-static boolean_t sWriteAMFICheckPolicyPatch(task_t task, vm_address_t address)
+static bool sWriteAMFICheckPolicyPatch(task_t task, vm_address_t address)
 {
     const uint8_t replacement[] = {
         0xe2, 0x0b, 0x80, 0xd2, // mov x2, #0x5f
@@ -325,7 +281,7 @@ static boolean_t sWriteAMFICheckPolicyPatch(task_t task, vm_address_t address)
     Generates our _dyld_start patch based on 'difference', then
     patches it via sWriteBuffer()
 */
-static boolean_t sWriteDyldStartPatch(task_t task, vm_address_t address, uint64_t difference)
+static bool sWriteDyldStartPatch(task_t task, vm_address_t address, uint64_t difference)
 {
     uint8_t replacement[] = {
         0xff, 0x03, 0x00, 0xd1, // sub sp, sp, 0            ; 0 will be filled in below
@@ -337,7 +293,7 @@ static boolean_t sWriteDyldStartPatch(task_t task, vm_address_t address, uint64_
         // 0x1f, 0xec, 0x7c, 0x92, // and sp, x0, #~15
     };
 
-    LogInfo("Writing _dyld_start() patch to %p, difference=%llu\n", address, difference);
+    Log("Writing _dyld_start() patch to %p, difference=%llu\n", address, difference);
 
     // We only know how to handle a difference of 24-bits
     if ((difference >> 24) > 0) {
@@ -364,7 +320,7 @@ static boolean_t sWriteDyldStartPatch(task_t task, vm_address_t address, uint64_
 /*
     Checks that _dyld_start contains the expected instructions.
 */
-static boolean_t sCheckDyldStart(task_t task, vm_address_t address)
+static bool sCheckDyldStart(task_t task, vm_address_t address)
 {
     const uint8_t expected[] = {
         0xe0, 0x03, 0x00, 0x91, // mov x0, sp
@@ -402,7 +358,7 @@ static boolean_t sCheckDyldStart(task_t task, vm_address_t address)
 /*
     Finds the address of amfi_check_dyld_policy_self() in the remote task
 */
-static boolean_t sFindAMFICheckPolicy(task_t task, uintptr_t pc, vm_address_t *outAddress)
+static bool sFindAMFICheckPolicy(task_t task, uintptr_t pc, vm_address_t *outAddress)
 {
 	task_dyld_info_data_t dyldInfo;
 	mach_msg_type_number_t count = TASK_DYLD_INFO_COUNT;
@@ -458,11 +414,11 @@ static boolean_t sFindAMFICheckPolicy(task_t task, uintptr_t pc, vm_address_t *o
     // Calculate location of amfi_check_dyld_policy_self() via basic math.
     vm_address_t my_amfi_check_dyld_policy_self = pc + (amfi_check_dyld_policy_self - _dyld_start);
 
-    LogInfo("Symbol table values:\n    amfi_check_dyld_policy_self: %p\n    _dyld_start: %p\n",
+    Log("Symbol table values:\n    amfi_check_dyld_policy_self: %p\n    _dyld_start: %p\n",
         amfi_check_dyld_policy_self, _dyld_start
     );
     
-    LogInfo("Computed location of amfi_check_dyld_policy_self: %p\n", my_amfi_check_dyld_policy_self);
+    Log("Computed location of amfi_check_dyld_policy_self: %p\n", my_amfi_check_dyld_policy_self);
 
     *outAddress = my_amfi_check_dyld_policy_self;
 
@@ -474,9 +430,9 @@ static boolean_t sFindAMFICheckPolicy(task_t task, uintptr_t pc, vm_address_t *o
     Reads the remote region of memory from sp to end-of-region
     and constructs our Stack struct.
 */
-static boolean_t sReadStack(task_port_t task, vm_address_t sp, Stack **outStack)
+static bool sReadStack(task_port_t task, vm_address_t sp, Stack **outStack)
 {
-    __block boolean_t ok = true;
+    __block bool ok = true;
 
     __block size_t scanOffset = 0;
 
@@ -487,17 +443,31 @@ static boolean_t sReadStack(task_port_t task, vm_address_t sp, Stack **outStack)
     
     __auto_type readStringBuffer = ^(uintptr_t address) {
         size_t offset = address - sp;
+        char *result = NULL;
 
-        size_t length = strnlen(remoteBuffer + offset, remoteLength - offset);
+        if (offset <= remoteLength) {
+            size_t length = strnlen(remoteBuffer + offset, remoteLength - offset);
+            
+            result = malloc(length + 1);
+            strncpy(result, remoteBuffer + offset, length);
+
+        } else {
+            ok = false;
+        }
         
-        char *str = malloc(length + 1);
-        strncpy(str, remoteBuffer + offset, length);
-        return str;
+        return result;
     };
     
     __auto_type scanPointer = ^() {
-        uintptr_t result = *(uintptr_t *)(remoteBuffer + scanOffset);
-        scanOffset += sizeof(uintptr_t);
+        uintptr_t result = 0;
+        
+        if ((scanOffset + sizeof(uintptr_t)) <= remoteLength) {
+            result = *(uintptr_t *)(remoteBuffer + scanOffset);
+            scanOffset += sizeof(uintptr_t);
+        } else {
+            ok = false;
+        }
+
         return result;
     };
     
@@ -550,7 +520,7 @@ static boolean_t sReadStack(task_port_t task, vm_address_t sp, Stack **outStack)
         err = vm_read(task, sp, bytesToRead, (vm_offset_t *)&remoteBuffer, &bytesRead);
         remoteLength = bytesRead;
         
-        LogInfo("Memory from sp to end of region:");
+        Log("Memory from sp to end of region:");
         sLogHexDump(sp, remoteBuffer, bytesRead);
 
         if (err != KERN_SUCCESS) {
@@ -579,22 +549,24 @@ static boolean_t sReadStack(task_port_t task, vm_address_t sp, Stack **outStack)
 
         if (err != KERN_SUCCESS) {
             LogError("vm_deallocate() failed, error = %ld", (long)err);
-            sFreeStack(stack);
-
-            return false;
+            ok = false;
         }
     }
     
-    *outStack = stack;
+    if (ok) {
+        *outStack = stack;
+    } else {
+        sFreeStack(stack);
+    }
 
-    return true;
+    return ok;
 }
 
 
 /*
     Modifies the Stack struct to add environment variables
 */
-static boolean_t sModifyStack(
+static bool sModifyStack(
     task_port_t task, Stack *stack,
     const char *dyldLibraryPath,
     const char *dyldFrameworkPath,
@@ -679,7 +651,7 @@ static boolean_t sModifyStack(
     Writes our (manipulated) Stack struct back into the remote process.
     Returns the new stack pointer.
 */
-static boolean_t sWriteStack(task_port_t task, Stack *stack, uintptr_t *outSp)
+static bool sWriteStack(task_port_t task, Stack *stack, uintptr_t *outSp)
 {
     __block vm_address_t sp = stack->user_stack;
     __block size_t stringCount = 0;
@@ -755,7 +727,7 @@ static boolean_t sWriteStack(task_port_t task, Stack *stack, uintptr_t *outSp)
         return false;
     }
     
-    LogInfo("New memory from sp to end of region:");
+    Log("New memory from sp to end of region:");
     sLogHexDump(sp, buffer, bufferLength);
 
     free(buffer);
@@ -768,20 +740,20 @@ static boolean_t sWriteStack(task_port_t task, Stack *stack, uintptr_t *outSp)
 
 #pragma mark - Public Functions
 
-void SetLogger(os_log_t logger)
+void InjectionSetLogCallback(InjectionLogCallback callback)
 {
-    sLogger = logger;
+    sLogCallback = callback;
 }
 
 
-boolean_t InjectIntoProcess(
+bool InjectionInjectIntoProcess(
     pid_t       pid,
     const char *dyldLibraryPath,
     const char *dyldFrameworkPath,
     const char *dyldInsertLibraries
 )
 {
-    boolean_t ok = true;
+    bool ok = true;
 
 	task_port_t task;
 	thread_act_array_t threads = NULL;
@@ -832,24 +804,24 @@ boolean_t InjectIntoProcess(
     
     Stack *stack = NULL;
 
-    LogInfo("Checking _dyld_start() at %p\n", pc);
+    Log("Checking _dyld_start() at %p\n", pc);
     ok = ok && sCheckDyldStart(task, pc);
 
-    LogInfo("Patching amfi_check_dyld_policy_self()\n");
+    Log("Patching amfi_check_dyld_policy_self()\n");
     vm_address_t my_amfi_check_dyld_policy_self = 0;
     ok = ok && sFindAMFICheckPolicy(task, pc, &my_amfi_check_dyld_policy_self);
 	ok = ok && sWriteAMFICheckPolicyPatch(task, my_amfi_check_dyld_policy_self);
 
-    LogInfo("Reading stack\n");
+    Log("Reading stack\n");
     ok = ok && sReadStack(task, sp, &stack);
 
-    LogInfo("Modifying stack\n");
+    Log("Modifying stack\n");
     ok = ok && sModifyStack(task, stack, dyldLibraryPath, dyldFrameworkPath, dyldInsertLibraries);
 
-    LogInfo("Writing new stack\n");
+    Log("Writing new stack\n");
     ok = ok && sWriteStack(task, stack, &modifiedSp);
 
-    LogInfo("Patching _dyld_start()\n");
+    Log("Patching _dyld_start()\n");
     ok = ok && sWriteDyldStartPatch(task, pc, sp - modifiedSp);
 
     sFreeStack(stack);

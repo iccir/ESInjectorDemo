@@ -14,6 +14,22 @@
 
 #include "Inject.h"
 
+static void sLog(FILE * f, char *format, ...)
+{
+    va_list v;
+    va_start(v, format);
+    
+    vfprintf(f, format, v);
+    fprintf(f, "\n");
+
+    va_end(v);
+}
+
+#define sLogStdout(...) sLog(stdout, ##__VA_ARGS__)
+#define sLogStderr(...) sLog(stderr, ##__VA_ARGS__)
+
+
+
 
 /*
     Adds DYLD_SHARED_REGION=1 to environment and re-executes via execve()
@@ -41,8 +57,16 @@ static void sExecWithoutDyldInCache(int argc, char **argv, char **inEnvp)
 
 int main(int argc, char **argv, char **envp)
 {
-    os_log_t logger = OS_LOG_DEFAULT;
-//    SetLogger(logger);
+    InjectionSetLogCallback(^(InjectionLogLevel level, const char *format, ...) {
+        va_list v;
+        va_start(v, format);
+
+        FILE *f = (level == InjectionLogLevelError) ? stderr : stdout;
+        vfprintf(f, format, v);
+        fprintf(f, "\n");
+
+        va_end(v);
+    });
 
     if (argc != 3) {
         fprintf(stderr, "Usage: Injector library_to_inject path_to_match\n");
@@ -50,7 +74,7 @@ int main(int argc, char **argv, char **envp)
     }
 
 	if (!getenv("DYLD_SHARED_REGION")) {
-        os_log_info(logger, "DYLD_SHARED_REGION not set, re-executing.");
+        sLogStdout("DYLD_SHARED_REGION not set, re-executing.");
         sExecWithoutDyldInCache(argc, argv, envp);
         assert(false);
 	}
@@ -62,7 +86,7 @@ int main(int argc, char **argv, char **envp)
 	es_client_t *client = NULL;
 	err = es_new_client(&client, ^(es_client_t *client, const es_message_t *message) {
 		if (message->event_type != ES_EVENT_TYPE_AUTH_EXEC) {
-            LogError("Received es_message_t of type: %u", message->event_type);
+            sLogStderr("Received es_message_t of type: %u", message->event_type);
             return;
         }
 
@@ -88,31 +112,31 @@ int main(int argc, char **argv, char **envp)
                substring matching.
         */
         if (strnstr(name, pathToMatch, strlen(name)) > 0) {
-            LogInfo("Matched pid %ld at '%s', injecting payload.", (long)pid, name);
+            sLogStdout("Matched pid %ld at '%s', injecting payload.", (long)pid, name);
 
             uint64_t startTime = mach_absolute_time();
 
-            if (InjectIntoProcess(pid, NULL, NULL, library)) {
+            if (InjectionInjectIntoProcess(pid, NULL, NULL, library)) {
                 mach_timebase_info_data_t timebase;
                 mach_timebase_info(&timebase);
 
                 uint64_t elapsed = (mach_absolute_time() - startTime) * timebase.numer / timebase.denom;
             
-                LogInfo("Injection into pid %ld successful, elapsed time: %ldms\n", (long)pid, (long)(elapsed / 1000000));
+                sLogStdout("Injection into pid %ld successful, elapsed time: %ldms\n", (long)pid, (long)(elapsed / 1000000));
 
             } else {
-                LogError("Injection into pid %ld failed", (long)pid);
+                sLogStderr("Injection into pid %ld failed", (long)pid);
             }
         }
 
         es_respond_result_t err = es_respond_auth_result(client, message, ES_AUTH_RESULT_ALLOW, false);
         if (err) {
-            LogError("es_respond_auth_result() failed, error = %ld", (long)err);
+            sLogStderr("es_respond_auth_result() failed, error = %ld", (long)err);
         }
 	});
     
     if (err) {
-        LogError("es_new_client() failed, error = %ld", (long)err);
+        sLogStderr("es_new_client() failed, error = %ld", (long)err);
         return 1;
     }
     
@@ -120,7 +144,7 @@ int main(int argc, char **argv, char **envp)
     err = es_subscribe(client, events, sizeof(events) / sizeof(es_event_type_t));
     
     if (err) {
-        LogError("es_subscribe() failed, error = %ld", (long)err);
+        sLogStderr("es_subscribe() failed, error = %ld", (long)err);
         return 1;
     }
     
