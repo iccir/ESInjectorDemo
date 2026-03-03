@@ -129,8 +129,10 @@ static void sLogHexDump(const vm_address_t address, const void *data, size_t siz
         hexString[  hexStringLength   - 1] = 0;
         asciiString[asciiStringLength - 1] = 0;
 
-        LogDebug("0x%016lx  %s |%s|\n", (unsigned long)address + offset, hexString, asciiString);
+        LogDebug("0x%016lx  %s |%s|", (unsigned long)address + offset, hexString, asciiString);
     }
+    
+    LogDebug("");
 }
 
 
