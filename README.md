@@ -19,6 +19,9 @@ This demo was developed on macOS Sonoma. While it should work on macOS Sequoia, 
 
 All links to external repositories point to Sonoma-era tags.
 
+> [!NOTE]
+> For injection into a running process, see my [ThreadInjectorDemo](https://github.com/iccir/ThreadInjectorDemo) repository.
+
 ## Preparation and Disclaimer
 
 As with all forms of code injection, you will need to disable [System Integrity Protection](https://developer.apple.com/documentation/security/disabling-and-enabling-system-integrity-protection?language=objc) (SIP). With great power comes great responsibility – running with SIP disabled dramatically increases the number of attack vectors which can be used against you.
