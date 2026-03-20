@@ -116,7 +116,7 @@ int main(int argc, char **argv, char **envp)
 
             uint64_t startTime = mach_absolute_time();
 
-            if (InjectionInjectIntoProcess(pid, NULL, NULL, library)) {
+            if (InjectionInjectLibrary(pid, library)) {
                 mach_timebase_info_data_t timebase;
                 mach_timebase_info(&timebase);
 

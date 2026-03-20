@@ -20,25 +20,6 @@
 #include <ctype.h>
 
 
-// The current code adds a maximum of 4 environment variables to the stack.
-// DYLD_LIBRARY_PATH, DYLD_FRAMEWORK_PATH, DYLD_INSERT_LIBRARIES, DYLD_SHARED_REGION
-//
-#define ENVP_EXTRA_CAPACITY 4
-
-
-// exec_copyout_strings in kern_exec.c has an ASCII diagram with a
-// box labelled "16b". It *looks* like this indicates some kind of padding
-// between the "STRING AREA" and p->user_stack; however, it could also mean
-// alignment.
-//
-// In any case, on Sonoma, there is no padding present and the end of
-// STRING AREA can be p->user_stack.
-//
-// Set this variable if extra padding is desired.
-//
-#define STRING_AREA_EXTRA_PADDING 0
-
-
 #pragma mark - Logging
 
 static InjectionLogCallback sLogCallback = NULL;
@@ -56,7 +37,7 @@ static InjectionLogCallback sLogCallback = NULL;
 })
 
 
-void sLogThreadState(const arm_thread_state64_t *state)
+static void sLogThreadState(const arm_thread_state64_t *state)
 {
     LogDebug(
         "Thread State:\n"
@@ -140,7 +121,8 @@ static void sLogHexDump(const vm_address_t address, const void *data, size_t siz
 
 typedef struct StackString {
     vm_address_t address; // Remote address
-    char *buffer;
+    char *key; // If non-null, this string is a key=value pair.
+    char *value;
 } StackString;
 
 
@@ -157,7 +139,10 @@ typedef struct Stack {
     StackList *argvList;
     StackList *envpList;
     StackList *applevList;
-    vm_address_t user_stack; // Remote address of end of user_stack
+    vm_address_t stackStart;  // Remote address of start of stack (sp)
+    vm_address_t stringStart; // Remote address of start of string area
+    vm_address_t user_stack;  // Remote address of end of user_stack
+    void *contents;           // Local copy of memory from sp -> user_stack
 } Stack;
 
 
@@ -173,12 +158,25 @@ static StackList *sCreateList(size_t capacity)
 }
 
 
+static void sListInsertString(StackList *list, StackString string)
+{
+    if (list->count == list->capacity) {
+        list->capacity = (list->capacity + 1) * 2;
+        list->strings = realloc(list->strings, list->capacity * sizeof(StackString));
+        memset(&list->strings[list->count], 0, (list->capacity - list->count) * sizeof(StackString));
+    }
+
+    list->strings[list->count++] = string;
+}
+
+
 static void sFreeList(StackList *list)
 {
     if (!list) return;
     
     for (int i = 0; i < list->count; i++) {
-        free(list->strings[i].buffer);
+        free(list->strings[i].key);
+        free(list->strings[i].value);
     }
     
     free(list->strings);
@@ -200,6 +198,8 @@ static void sFreeStack(Stack *stack)
     sFreeList(stack->argvList);
     sFreeList(stack->envpList);
     sFreeList(stack->applevList);
+    
+    free(stack->contents);
 
     free(stack);
 }
@@ -365,6 +365,9 @@ static bool sFindAMFICheckPolicy(task_t task, uintptr_t pc, vm_address_t *outAdd
 	task_dyld_info_data_t dyldInfo;
 	mach_msg_type_number_t count = TASK_DYLD_INFO_COUNT;
  
+    // We need to read mach_task_self() here, as the remote task
+    // hasn't yet performed dyld initialization.
+    //
     kern_return_t err = task_info(mach_task_self(), TASK_DYLD_INFO, (task_info_t)&dyldInfo, &count);
     
     if (err != KERN_SUCCESS) {
@@ -432,14 +435,14 @@ static bool sFindAMFICheckPolicy(task_t task, uintptr_t pc, vm_address_t *outAdd
     Reads the remote region of memory from sp to end-of-region
     and constructs our Stack struct.
 */
-static bool sReadStack(task_port_t task, vm_address_t sp, Stack **outStack)
+static bool sReadStack(task_port_t task, vm_address_t sp, size_t envpExtraCapacity, Stack **outStack)
 {
     __block bool ok = true;
 
     __block size_t scanOffset = 0;
 
-    __block void *remoteBuffer = NULL;
-    __block vm_size_t remoteLength = 0;
+    __block void *contents = NULL;
+    __block vm_size_t contentsLength = 0;
     
     vm_address_t user_stack;
     
@@ -447,11 +450,9 @@ static bool sReadStack(task_port_t task, vm_address_t sp, Stack **outStack)
         size_t offset = address - sp;
         char *result = NULL;
 
-        if (offset <= remoteLength) {
-            size_t length = strnlen(remoteBuffer + offset, remoteLength - offset);
-            
-            result = malloc(length + 1);
-            strncpy(result, remoteBuffer + offset, length);
+        if (offset <= contentsLength) {
+            size_t length = strnlen(contents + offset, contentsLength - offset);
+            result = strndup(contents + offset, length);
 
         } else {
             ok = false;
@@ -463,8 +464,8 @@ static bool sReadStack(task_port_t task, vm_address_t sp, Stack **outStack)
     __auto_type scanPointer = ^() {
         uintptr_t result = 0;
         
-        if ((scanOffset + sizeof(uintptr_t)) <= remoteLength) {
-            result = *(uintptr_t *)(remoteBuffer + scanOffset);
+        if ((scanOffset + sizeof(uintptr_t)) <= contentsLength) {
+            result = *(uintptr_t *)(contents + scanOffset);
             scanOffset += sizeof(uintptr_t);
         } else {
             ok = false;
@@ -473,28 +474,42 @@ static bool sReadStack(task_port_t task, vm_address_t sp, Stack **outStack)
         return result;
     };
     
-    __auto_type scanList = ^(size_t extra) {
+    __auto_type splitString = ^(StackString *string) {
+        char *buffer = string->value;
+
+        char *equal = strchr(buffer, '=');
+        if (!equal) return;
+        
+        // "KEY=value<0x00>" becomes "KEY<0x00>value<0x00>"
+        *equal = 0;
+
+        string->key = buffer;
+        string->value = strdup(equal + 1);
+    };
+    
+    __auto_type scanList = ^(bool splitStrings) {
         size_t savedOffset = scanOffset;
         size_t count = 0;
         
         while (ok && scanPointer()) count++;
 
-        StackList *list = sCreateList(count + extra);
+        StackList *list = sCreateList(count);
 
         scanOffset = savedOffset;
         for (size_t i = 0; i < count; i++) {
             uintptr_t address = scanPointer();
+            char *buffer = readStringBuffer(address);
 
-            list->strings[i].address = address;
-            list->strings[i].buffer = readStringBuffer(address);
-            list->count++;
+            StackString string = { address, 0, buffer };
+            if (splitStrings) splitString(&string);
+            sListInsertString(list, string);
         }
         scanPointer();
         
         return list;
     };
 
-    // Read remote stack into remoteBuffer/remoteLength
+    // Read remote stack into contents/contentsLength
     {
         vm_address_t regionAddr = (vm_address_t)sp;
         vm_size_t regionSize;
@@ -516,23 +531,26 @@ static bool sReadStack(task_port_t task, vm_address_t sp, Stack **outStack)
 
         user_stack = (regionAddr + regionSize);
 
-        mach_msg_type_number_t bytesToRead = (mach_msg_type_number_t)(user_stack - sp);
-        mach_msg_type_number_t bytesRead   = bytesToRead;
+        vm_size_t bytesToRead = (vm_size_t)(user_stack - sp);
+        vm_size_t bytesRead   = bytesToRead;
 
-        err = vm_read(task, sp, bytesToRead, (vm_offset_t *)&remoteBuffer, &bytesRead);
-        remoteLength = bytesRead;
+        contents = malloc(bytesToRead);
+        err = vm_read_overwrite(task, sp, bytesToRead, (vm_address_t)contents, &bytesRead);
+        contentsLength = bytesRead;
         
-        Log("Memory from sp to end of region:");
-        sLogHexDump(sp, remoteBuffer, bytesRead);
-
         if (err != KERN_SUCCESS) {
-            LogError("vm_read() failed, error = %ld", (long)err);
+            LogError("vm_read_overwrite() failed, error = %ld", (long)err);
+            free(contents);
             return false;
 
         } else if (bytesRead != bytesToRead) {
-            LogError("vm_read() read wrong size of %u, expected %u", bytesRead, bytesToRead);
+            LogError("vm_read_overwrite() read wrong size of %u, expected %u", bytesRead, bytesToRead);
+            free(contents);
             return false;
         }
+
+        Log("Memory from sp to end of region:");
+        sLogHexDump(sp, contents, contentsLength);
     }
 
     // Scan remoteBuffer and build Stack object
@@ -540,21 +558,15 @@ static bool sReadStack(task_port_t task, vm_address_t sp, Stack **outStack)
 
     stack->loadAddress = scanPointer();
     stack->argc        = scanPointer();
-    stack->argvList    = scanList(0);
-    stack->envpList    = scanList(ENVP_EXTRA_CAPACITY);
-    stack->applevList  = scanList(0);
-    stack->user_stack  = user_stack;
-
-    // Deallocate buffer from vm_read
-    {
-        kern_return_t err = vm_deallocate(mach_task_self(), (vm_address_t)remoteBuffer, remoteLength);
-
-        if (err != KERN_SUCCESS) {
-            LogError("vm_deallocate() failed, error = %ld", (long)err);
-            ok = false;
-        }
-    }
+    stack->argvList    = scanList(false);
+    stack->envpList    = scanList(true);
+    stack->applevList  = scanList(true);
     
+    stack->stackStart  = sp;
+    stack->stringStart = sp + scanOffset;
+    stack->user_stack  = user_stack;
+    stack->contents    = contents;
+
     if (ok) {
         *outStack = stack;
     } else {
@@ -570,21 +582,18 @@ static bool sReadStack(task_port_t task, vm_address_t sp, Stack **outStack)
 */
 static bool sModifyStack(
     task_port_t task, Stack *stack,
-    const char *dyldLibraryPath,
-    const char *dyldFrameworkPath,
-    const char *dyldInsertLibraries
+    const InjectionVariable *prependPathVariables,
+    const InjectionVariable *appendPathVariables,
+    const InjectionVariable *overwriteVariables
 ) {
-    __auto_type getStringWithPrefix = ^(StackList *list, const char *prefix) {
+    __auto_type getStringWithKey = ^(StackList *list, const char *key) {
         StackString *foundString = NULL;
-        size_t needleLength = strlen(prefix);
 
         for (int i = 0; i < list->count; i++) {
             StackString *string = &list->strings[i];
+            if (!string || !string->key) continue;
 
-            if (!string) continue;
-            if (strlen(string->buffer) < needleLength) continue;
-
-            if (strncmp(string->buffer, prefix, needleLength) == 0) {
+            if (strcmp(string->key, key) == 0) {
                 foundString = string;
                 break;
             }
@@ -592,58 +601,40 @@ static bool sModifyStack(
         
         return foundString;
     };
-    
-    __auto_type replaceContents = ^(StackString *string, const char *prefix, const char *value) {
-        size_t length = strlen(prefix) + strlen(value) + 1;
-        free(string->buffer);
-        string->buffer = malloc(length);
-        snprintf(string->buffer, length, "%s%s", prefix, value);
-    };
-    
-    __auto_type appendString = ^(StackList *list, const char *prefix, const char *value) {
-        assert(list->count < list->capacity);
-        replaceContents(&list->strings[list->count], prefix, value);
-        list->count++;
-    };
 
-    __auto_type appendPathValue = ^(StackList *list, const char *prefix, const char *value) {
-        StackString *string = getStringWithPrefix(list, prefix);
-        
-        if (string) {
-            size_t length = strlen(string->buffer) + strlen(value) + 2;
-            char *newBuffer = malloc(length);
-            snprintf(newBuffer, length, "%s:%s", string->buffer, value);
+    __auto_type processVariables = ^(StackList *list, const InjectionVariable *variable, const char *formatString) {
+        while (variable && variable->key && variable->value) {
+            StackString *string = getStringWithKey(list, variable->key);
+            
+            if (string) {
+                char *oldValue = string->value;
 
-            free(string->buffer);
-            string->buffer = newBuffer;
+                if (oldValue && (strlen(oldValue) > 0)) {
+                    asprintf(&string->value, formatString, oldValue, variable->value);
+                } else {
+                    string->value = strdup(variable->value);
+                }
 
-        } else {
-            appendString(list, prefix, value);
+                // Invalidate address so this string is added to "more" area
+                string->address = 0;
+                
+                free(oldValue);
+
+            } else {
+                StackString string = {0};
+                string.key   = strdup(variable->key);
+                string.value = strdup(variable->value);
+                
+                sListInsertString(list, string);
+            }
+            
+            variable++;
         }
     };
 
-    if (dyldLibraryPath) {
-        appendPathValue(stack->envpList, "DYLD_LIBRARY_PATH=", dyldLibraryPath);
-    }
-
-    if (dyldFrameworkPath) {
-        appendPathValue(stack->envpList, "DYLD_FRAMEWORK_PATH=", dyldFrameworkPath);
-    }
-
-    if (dyldInsertLibraries) {
-        appendPathValue(stack->envpList, "DYLD_INSERT_LIBRARIES=", dyldInsertLibraries);
-    }
-
-    // Ensure DYLD_SHARED_REGION=1 to disable dyld-in-cache
-    {
-        StackString *dyldSharedRegion = getStringWithPrefix(stack->envpList, "DYLD_SHARED_REGION=");
-
-        if (dyldSharedRegion) {
-            replaceContents(dyldSharedRegion, "DYLD_SHARED_REGION=", "1");
-        } else {
-            appendString(stack->envpList, "DYLD_SHARED_REGION=", "1");
-        }
-    }
+    processVariables(stack->envpList, prependPathVariables, "%2$s:%1$s");
+    processVariables(stack->envpList, appendPathVariables,  "%1$s:%2$s");
+    processVariables(stack->envpList, overwriteVariables,   "%2$s");
 
     return true;
 }
@@ -655,30 +646,39 @@ static bool sModifyStack(
 */
 static bool sWriteStack(task_port_t task, Stack *stack, uintptr_t *outSp)
 {
-    __block vm_address_t sp = stack->user_stack;
-    __block size_t stringCount = 0;
-    __block size_t stringAreaLength = 0;
+    __block vm_address_t sp = stack->stringStart;
 
-    // Add extra 0x00 bytes if STRING_AREA_EXTRA_PADDING (shouldn't be needed)
-    sp -= STRING_AREA_EXTRA_PADDING;
-    stringAreaLength += STRING_AREA_EXTRA_PADDING;
+    __block size_t pointerCount = 0;
+
+    __auto_type getLength = ^(StackString *string) {
+        size_t length = strlen(string->value) + 1;
+
+        if (string->key) {
+            length += strlen(string->key) + 1;
+        }
+
+        return length;
+    };
     
     sStackIterateLists(stack, ^(StackList *list) {
         sListIterateStrings(list, ^(StackString *string) {
-            size_t length = strlen(string->buffer) + 1;
-            sp -= length;
-            stringAreaLength += length;
-            stringCount++;
+            size_t length = getLength(string);
+            
+            if (!string->address) {
+                sp -= length;
+            }
+
+            pointerCount++;
         });
     });
 
     // Align to pointer boundary
     sp = (sp / sizeof(uintptr_t)) * sizeof(uintptr_t);
     
-    vm_address_t stringAreaStart = sp;
+    vm_address_t moreAreaStart = sp;
     
-    // Move down for itemCount pointers, plus 3 NULL separators, argc, and loadAddress
-    sp -= (stringCount + 3 + 1 + 1) * sizeof(uintptr_t);
+    // Move down for pointerCount pointers, plus 3 NULL separators, argc, and loadAddress
+    sp -= (pointerCount + 3 + 1 + 1) * sizeof(uintptr_t);
 
     // Align stack to 16-byte boundary
     sp = sp & ~0xF;
@@ -686,17 +686,39 @@ static bool sWriteStack(task_port_t task, Stack *stack, uintptr_t *outSp)
     size_t bufferLength = stack->user_stack - sp;
     void  *buffer = calloc(1, bufferLength);
 
-    // Write strings area
+    // Copy original string area to end of buffer.
     {
-        __block size_t bufferOffset = stringAreaStart - sp;
+        size_t stringAreaLength = stack->user_stack - stack->stringStart;
+        size_t contentsLength   = stack->user_stack - stack->stackStart;
+
+        memcpy(
+            buffer          + (bufferLength   - stringAreaLength),
+            stack->contents + (contentsLength - stringAreaLength),
+            stringAreaLength
+        );
+    }
+    
+    // Write "more" area (our additions to the string area)
+    {
+        __block size_t bufferOffset = moreAreaStart - sp;
         
         sStackIterateLists(stack, ^(StackList *list) {
             sListIterateStrings(list, ^(StackString *string) {
+                // If this string still has an address, it wasn't modified
+                // and we can use the original version in the string area.
+                if (string->address) return;
+
                 string->address = sp + bufferOffset;
 
-                size_t length = strlen(string->buffer);
-                memcpy(buffer + bufferOffset, string->buffer, length);
-                bufferOffset += length + 1;
+                size_t length = getLength(string);
+
+                if (string->key) {
+                    snprintf(buffer + bufferOffset, length, "%s=%s", string->key, string->value);
+                } else {
+                    snprintf(buffer + bufferOffset, length, "%s", string->value);
+                }
+                
+                bufferOffset += length;
             });
         });
     }
@@ -748,13 +770,12 @@ void InjectionSetLogCallback(InjectionLogCallback callback)
 }
 
 
-bool InjectionInjectIntoProcess(
-    pid_t       pid,
-    const char *dyldLibraryPath,
-    const char *dyldFrameworkPath,
-    const char *dyldInsertLibraries
-)
-{
+bool InjectionModifyEnvironment(
+    pid_t pid,
+    const InjectionVariable *prependPathVariables,
+    const InjectionVariable *appendPathVariables,
+    const InjectionVariable *overwriteVariables
+) {
     bool ok = true;
 
 	task_port_t task;
@@ -815,10 +836,11 @@ bool InjectionInjectIntoProcess(
 	ok = ok && sWriteAMFICheckPolicyPatch(task, my_amfi_check_dyld_policy_self);
 
     Log("Reading stack\n");
-    ok = ok && sReadStack(task, sp, &stack);
+    size_t envpExtraCapacity = 4;
+    ok = ok && sReadStack(task, sp, envpExtraCapacity, &stack);
 
     Log("Modifying stack\n");
-    ok = ok && sModifyStack(task, stack, dyldLibraryPath, dyldFrameworkPath, dyldInsertLibraries);
+    ok = ok && sModifyStack(task, stack, prependPathVariables, appendPathVariables, overwriteVariables);
 
     Log("Writing new stack\n");
     ok = ok && sWriteStack(task, stack, &modifiedSp);
@@ -849,3 +871,18 @@ cleanup:
     return ok;
 }
 
+
+bool InjectionInjectLibrary(pid_t pid, const char *libraryPath)
+{
+    InjectionVariable overwriteVariables[] = {
+        { "DYLD_SHARED_REGION", "1" },
+        { NULL, NULL }
+    };
+
+    InjectionVariable appendPathVariables[] = {
+        { "DYLD_INSERT_LIBRARIES", libraryPath },
+        { NULL, NULL }
+    };
+    
+    return InjectionModifyEnvironment(pid, NULL, appendPathVariables, overwriteVariables);
+}
