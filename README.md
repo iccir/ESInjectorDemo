@@ -124,13 +124,13 @@ macOS imposes a few restrictions:
 
 - The stack pointer register (sp) must be 16-byte aligned upon entering dyld's `start()` function.
 - All pointers in the pointer area must be aligned to 8-byte boundaries.
-- The contents of the original string area (`executable_path=` to the end of the VM region (`p->user_stack`) should not change. Doing so will corrupt the results of `KERN_PROCARGS2` calls. [See Issue 2](https://github.com/iccir/ESInjectorDemo/issues/2). 
+- The contents of the original string area (`executable_path=` to `p->user_stack`) should not change. Doing so will corrupt the results of `KERN_PROCARGS2` calls. [See Issue 2](https://github.com/iccir/ESInjectorDemo/issues/2). 
 
 Our plan is the following:
 
-- We parse the contents of the stack and build a `Stack` structure in `sReadStack()`.
-- We add our new environmental variables to this structure in `sModifyStack()`.
-- We write the structure back to the stack in `sWriteStack()`. We create a new "addendum" section immediately below the string area for any modified or inserted environmental variables.
+- Parse the contents of the stack and build a `Stack` structure in `sReadStack()`.
+- Add our new environmental variables to this structure in `sModifyStack()`.
+- Write the structure back to the stack in `sWriteStack()`. We create a new "addendum" section immediately below the string area for any modified or inserted environmental variables.
 
 Here's our updated memory:
 
