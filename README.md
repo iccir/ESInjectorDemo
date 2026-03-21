@@ -120,20 +120,23 @@ We need to do the following:
 - Modify the string area to add our `DYLD_INSERT_LIBRARIES` and `DYLD_SHARED_REGION` environment variables.
 - Add pointers to `envp[]` for the added variables.
 
-Unfortunately, we are very limited in space and cannot easily add new values. We need to plan on rewriting the string area and rebuilding the pointer lists.
+macOS imposes a few restrictions:
 
-> [!NOTE]  
-> While the kernel adds alignment and padding bytes inside of the string area, we do not need to preserve these. We simply need to ensure that all pointers are aligned to 8-byte boundaries.
+- The stack pointer register (sp) must be 16-byte aligned upon entering dyld's `start()` function.
+- All pointers in the pointer area must be aligned to 8-byte boundaries.
+- The contents of the original string area (`executable_path=` to the end of the VM region (`p->user_stack`) should not change. Doing so will corrupt the results of `KERN_PROCARGS2` calls. [See Issue 2](https://github.com/iccir/ESInjectorDemo/issues/2). 
 
-In the demo, `sReadStack()` parses the contents of the stack and builds a `Stack` structure. We add our new environmental variables to this structure in `sModifyStack()`. We then write the structure back to the stack in `sWriteStack()`.
+Our plan is the following:
+
+- We parse the contents of the stack and build a `Stack` structure in `sReadStack()`.
+- We add our new environmental variables to this structure in `sModifyStack()`.
+- We write the structure back to the stack in `sWriteStack()`. We create a new "addendum" section immediately below the string area for any modified or inserted environmental variables.
 
 Here's our updated memory:
 
 <img alt="Hexdump with pointer area annotations" src="Docs/hexdump3.png" width=720>
 
-<img alt="Hexdump with string area annotations" src="Docs/hexdump4.png" width=720>
-
-Note that due to the added variables, our new stack pointer is `0x16dde7c90` instead of `0x16dde7ce0`, a difference of 80 bytes.
+Note that due to the added variables, our new stack pointer needs to be `0x16f177c90` instead of `0x16f177cf0`, a difference of 96 bytes.
 
 ### Updating the Stack Pointer
 
@@ -152,11 +155,11 @@ __dyld_start:
 
 As Saagar notes, `fp` and `lr` are initialized to `0` by the kernel. This gives us 2 instructions worth of wiggle-room. Additionally, in `sModifyStack()`, we already align `sp` to a 16-byte boundary, giving us an extra instruction.
 
-We need to move `sp` downwards by 80 bytes. To do this, we can simply replace the first two instructions:
+We need to move `sp` downwards by 96 bytes. To do this, we can simply replace the first two instructions:
 
 ```text
 __dyld_start:
-    sub sp, sp, #80
+    sub sp, sp, #96
     mov x0, sp
     b   start
 ```
@@ -229,6 +232,56 @@ actual_amfi_check_dyld_policy_self =
 ```
 
 `sWriteAMFICheckPolicyPatch()` then writes our patch to this address and enables interposing.
+
+## Advanced Usage
+
+The demo uses `InjectionInjectLibrary()` in `Injector.h`/`Injector.c` to inject a single dyld into the specified process.
+
+You can use `InjectionModifyEnvironment()` for more-advanced use cases.
+
+For example, suppose we have the following environmental variables:
+
+```
+DYLD_FRAMEWORK_PATH=/tmp/example1
+DYLD_INSERT_LIBRARIES=/tmp/foo.dyld
+```
+
+We'd like to modify these to be:
+
+```
+DYLD_FRAMEWORK_PATH=/tmp/example2:/tmp/example1
+DYLD_LIBRARY_PATH=/tmp/example3
+DYLD_INSERT_LIBRARIES=/tmp/foo.dylib:/tmp/bar.dylib
+DYLD_SHARED_CACHE=1
+```
+
+We can do so with the following code:
+
+```c
+InjectionVariable prependPathVariables[] = {
+    { "DYLD_FRAMEWORK_PATH", "/tmp/example2" },
+    { NULL, NULL }
+};
+
+InjectionVariable appendPathVariables[] = {
+    { "DYLD_LIBRARY_PATH", "/tmp/example3" },
+    { "DYLD_INSERT_LIBRARIES", "/tmp/bar.dylib" },
+    { NULL, NULL }
+};
+
+InjectionVariable overwriteVariables[] = {
+    { "DYLD_SHARED_REGION", "1" },
+    { NULL, NULL }
+};
+
+bool ok = InjectionModifyEnvironment(
+    pid,
+    prependPathVariables,
+    appendPathVariables,
+    overwriteVariables
+);
+```
+
 
 ## License
 

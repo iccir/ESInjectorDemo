@@ -615,7 +615,7 @@ static bool sModifyStack(
                     string->value = strdup(variable->value);
                 }
 
-                // Invalidate address so this string is added to "more" area
+                // Invalidate address so this string is added to "addendum"
                 string->address = 0;
                 
                 free(oldValue);
@@ -675,7 +675,7 @@ static bool sWriteStack(task_port_t task, Stack *stack, uintptr_t *outSp)
     // Align to pointer boundary
     sp = (sp / sizeof(uintptr_t)) * sizeof(uintptr_t);
     
-    vm_address_t moreAreaStart = sp;
+    vm_address_t addendumStart = sp;
     
     // Move down for pointerCount pointers, plus 3 NULL separators, argc, and loadAddress
     sp -= (pointerCount + 3 + 1 + 1) * sizeof(uintptr_t);
@@ -698,9 +698,9 @@ static bool sWriteStack(task_port_t task, Stack *stack, uintptr_t *outSp)
         );
     }
     
-    // Write "more" area (our additions to the string area)
+    // Write "addendum" (our additions to the string area)
     {
-        __block size_t bufferOffset = moreAreaStart - sp;
+        __block size_t bufferOffset = addendumStart - sp;
         
         sStackIterateLists(stack, ^(StackList *list) {
             sListIterateStrings(list, ^(StackString *string) {
