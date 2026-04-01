@@ -778,7 +778,7 @@ bool InjectionModifyEnvironment(
 ) {
     bool ok = true;
 
-	task_port_t task;
+	task_port_t task = 0;
 	thread_act_array_t threads = NULL;
 	mach_msg_type_number_t threadCount = 0;
 
@@ -851,6 +851,10 @@ bool InjectionModifyEnvironment(
     sFreeStack(stack);
 
 cleanup:
+    if (task) {
+        mach_port_deallocate(mach_task_self(), task);
+    }
+
     if (threads && threadCount > 0) {
         for (size_t i = 0; i < threadCount; i++) {
             kern_return_t err = mach_port_deallocate(mach_task_self(), threads[i]);
