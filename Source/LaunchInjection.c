@@ -4,7 +4,7 @@
     SPDX-License-Identifier: LGPL-3.0-only
 */
 
-#include "Injection.h"
+#include "LaunchInjection.h"
 
 #include <sys/sysctl.h>
 #include <sys/errno.h>
@@ -22,18 +22,18 @@
 
 #pragma mark - Logging
 
-static InjectionLogCallback sLogCallback = NULL;
+static LaunchInjectionLogCallback sLogCallback = NULL;
 
 #define LogDebug(...) __extension__({ \
-    if (sLogCallback) sLogCallback(InjectionLogLevelDebug, ##__VA_ARGS__); \
+    if (sLogCallback) sLogCallback(LaunchInjectionLogLevelDebug, ##__VA_ARGS__); \
 })
 
 #define Log(...) __extension__({ \
-    if (sLogCallback) sLogCallback(InjectionLogLevelDefault, ##__VA_ARGS__); \
+    if (sLogCallback) sLogCallback(LaunchInjectionLogLevelDefault, ##__VA_ARGS__); \
 })
 
 #define LogError(...) __extension__({ \
-    if (sLogCallback) sLogCallback(InjectionLogLevelError, ##__VA_ARGS__); \
+    if (sLogCallback) sLogCallback(LaunchInjectionLogLevelError, ##__VA_ARGS__); \
 })
 
 
@@ -582,9 +582,9 @@ static bool sReadStack(task_port_t task, vm_address_t sp, size_t envpExtraCapaci
 */
 static bool sModifyStack(
     task_port_t task, Stack *stack,
-    const InjectionVariable *prependPathVariables,
-    const InjectionVariable *appendPathVariables,
-    const InjectionVariable *overwriteVariables
+    const LaunchInjectionVariable *prependPathVariables,
+    const LaunchInjectionVariable *appendPathVariables,
+    const LaunchInjectionVariable *overwriteVariables
 ) {
     __auto_type getStringWithKey = ^(StackList *list, const char *key) {
         StackString *foundString = NULL;
@@ -602,7 +602,7 @@ static bool sModifyStack(
         return foundString;
     };
 
-    __auto_type processVariables = ^(StackList *list, const InjectionVariable *variable, const char *formatString) {
+    __auto_type processVariables = ^(StackList *list, const LaunchInjectionVariable *variable, const char *formatString) {
         while (variable && variable->key && variable->value) {
             StackString *string = getStringWithKey(list, variable->key);
             
@@ -764,17 +764,17 @@ static bool sWriteStack(task_port_t task, Stack *stack, uintptr_t *outSp)
 
 #pragma mark - Public Functions
 
-void InjectionSetLogCallback(InjectionLogCallback callback)
+void LaunchInjectionSetLogCallback(LaunchInjectionLogCallback callback)
 {
     sLogCallback = callback;
 }
 
 
-bool InjectionModifyEnvironment(
+bool LaunchInjectionModifyEnvironment(
     pid_t pid,
-    const InjectionVariable *prependPathVariables,
-    const InjectionVariable *appendPathVariables,
-    const InjectionVariable *overwriteVariables
+    const LaunchInjectionVariable *prependPathVariables,
+    const LaunchInjectionVariable *appendPathVariables,
+    const LaunchInjectionVariable *overwriteVariables
 ) {
     bool ok = true;
 
@@ -876,17 +876,17 @@ cleanup:
 }
 
 
-bool InjectionInjectLibrary(pid_t pid, const char *libraryPath)
+bool LaunchInjectionInjectLibrary(pid_t pid, const char *libraryPath)
 {
-    InjectionVariable overwriteVariables[] = {
+    LaunchInjectionVariable overwriteVariables[] = {
         { "DYLD_SHARED_REGION", "1" },
         { NULL, NULL }
     };
 
-    InjectionVariable appendPathVariables[] = {
+    LaunchInjectionVariable appendPathVariables[] = {
         { "DYLD_INSERT_LIBRARIES", libraryPath },
         { NULL, NULL }
     };
     
-    return InjectionModifyEnvironment(pid, NULL, appendPathVariables, overwriteVariables);
+    return LaunchInjectionModifyEnvironment(pid, NULL, appendPathVariables, overwriteVariables);
 }

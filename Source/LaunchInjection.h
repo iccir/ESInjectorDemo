@@ -4,6 +4,9 @@
     SPDX-License-Identifier: LGPL-3.0-only
 */
 
+#ifndef LAUNCH_INJECTION_H
+#define LAUNCH_INJECTION_H
+
 #include <sys/types.h>
 #include <stdbool.h>
 
@@ -17,41 +20,43 @@
     Hence, everybody writes their own wrappers.
 */
 typedef enum {
-    InjectionLogLevelDebug,   // arm64 register information, hex dumps
-    InjectionLogLevelDefault, // Information about what the injector is doing
-    InjectionLogLevelError    // Errors
-} InjectionLogLevel;
+    LaunchInjectionLogLevelDebug,   // arm64 register information, hex dumps
+    LaunchInjectionLogLevelDefault, // Information about what the injector is doing
+    LaunchInjectionLogLevelError    // Errors
+} LaunchInjectionLogLevel;
 
-typedef void (^InjectionLogCallback)(InjectionLogLevel level, const char *format, ...);
+typedef void (^LaunchInjectionLogCallback)(LaunchInjectionLogLevel level, const char *format, ...);
 
-void InjectionSetLogCallback(InjectionLogCallback callback);
+void LaunchInjectionSetLogCallback(LaunchInjectionLogCallback callback);
 
 
 /*
     Basic API, used by demo.
     Will append libraryPath to DYLD_INSERT_LIBRARIES and set DYLD_SHARED_REGION to 1.
 */
-bool InjectionInjectLibrary(pid_t pid, const char *libraryPath);
+bool LaunchInjectionInjectLibrary(pid_t pid, const char *libraryPath);
 
 
 /*
     Advanced API, allows finer-grained manipulation of environmental variables.
     Each InjectionVariable parameter should be terminated with { NULL, NULL }.
 */
-typedef struct InjectionVariable {
+typedef struct LaunchInjectionVariable {
     const char *key;
     const char *value;
-} InjectionVariable;
+} LaunchInjectionVariable;
 
 bool InjectionModifyEnvironment(
     pid_t pid,
     
     // Prepends to existed variables using a ':' separator
-    const InjectionVariable *prependPathVariables,
+    const LaunchInjectionVariable *prependPathVariables,
 
     // Appends to existed variables using a ':' separator
-    const InjectionVariable *appendPathVariables,
+    const LaunchInjectionVariable *appendPathVariables,
 
     // Overwrites any existing variables
-    const InjectionVariable *overwriteVariables
+    const LaunchInjectionVariable *overwriteVariables
 );
+
+#endif /* LAUNCH_INJECTION_H */

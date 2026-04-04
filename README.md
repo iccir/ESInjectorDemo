@@ -235,9 +235,9 @@ actual_amfi_check_dyld_policy_self =
 
 ## Advanced Usage
 
-The demo uses `InjectionInjectLibrary()` in `Injector.h`/`Injector.c` to inject a single dyld into the specified process.
+The demo uses `LaunchInjectionInjectLibrary()` in `LaunchInjection.h`/`LaunchInjection.c` to inject a single dyld into the specified process.
 
-You can use `InjectionModifyEnvironment()` for more-advanced use cases.
+You can use `LaunchInjectionModifyEnvironment()` for more-advanced use cases.
 
 For example, suppose we have the following environmental variables:
 
@@ -258,23 +258,23 @@ DYLD_SHARED_CACHE=1
 We can do so with the following code:
 
 ```c
-InjectionVariable prependPathVariables[] = {
+LaunchInjectionVariable prependPathVariables[] = {
     { "DYLD_FRAMEWORK_PATH", "/tmp/example2" },
     { NULL, NULL }
 };
 
-InjectionVariable appendPathVariables[] = {
+LaunchInjectionVariable appendPathVariables[] = {
     { "DYLD_LIBRARY_PATH", "/tmp/example3" },
     { "DYLD_INSERT_LIBRARIES", "/tmp/bar.dylib" },
     { NULL, NULL }
 };
 
-InjectionVariable overwriteVariables[] = {
+LaunchInjectionVariable overwriteVariables[] = {
     { "DYLD_SHARED_REGION", "1" },
     { NULL, NULL }
 };
 
-bool ok = InjectionModifyEnvironment(
+bool ok = LaunchInjectionModifyEnvironment(
     pid,
     prependPathVariables,
     appendPathVariables,

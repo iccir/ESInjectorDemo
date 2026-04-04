@@ -12,7 +12,7 @@
 #include <assert.h>
 #include <string.h>
 
-#include "Injection.h"
+#include "LaunchInjection.h"
 
 static void sLog(FILE * f, char *format, ...)
 {
@@ -57,11 +57,11 @@ static void sExecWithoutDyldInCache(int argc, char **argv, char **inEnvp)
 
 int main(int argc, char **argv, char **envp)
 {
-    InjectionSetLogCallback(^(InjectionLogLevel level, const char *format, ...) {
+    LaunchInjectionSetLogCallback(^(LaunchInjectionLogLevel level, const char *format, ...) {
         va_list v;
         va_start(v, format);
 
-        FILE *f = (level == InjectionLogLevelError) ? stderr : stdout;
+        FILE *f = (level == LaunchInjectionLogLevelError) ? stderr : stdout;
         vfprintf(f, format, v);
         fprintf(f, "\n");
 
@@ -116,7 +116,7 @@ int main(int argc, char **argv, char **envp)
 
             uint64_t startTime = mach_absolute_time();
 
-            if (InjectionInjectLibrary(pid, library)) {
+            if (LaunchInjectionInjectLibrary(pid, library)) {
                 mach_timebase_info_data_t timebase;
                 mach_timebase_info(&timebase);
 
