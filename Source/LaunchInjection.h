@@ -46,7 +46,7 @@ typedef struct LaunchInjectionVariable {
     const char *value;
 } LaunchInjectionVariable;
 
-bool InjectionModifyEnvironment(
+bool LaunchInjectionModifyEnvironment(
     pid_t pid,
     
     // Prepends to existed variables using a ':' separator
