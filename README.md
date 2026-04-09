@@ -202,7 +202,9 @@ int amfi_check_dyld_policy_self(uint64_t input_flags, uint64_t* output_flags)
         AMFI_DYLD_OUTPUT_ALLOW_CUSTOM_SHARED_CACHE |
         AMFI_DYLD_OUTPUT_ALLOW_FALLBACK_PATHS      |
         AMFI_DYLD_OUTPUT_ALLOW_PRINT_VARS          |
-        AMFI_DYLD_OUTPUT_ALLOW_LIBRARY_INTERPOSING;
+        AMFI_DYLD_OUTPUT_ALLOW_LIBRARY_INTERPOSING |
+        AMFI_DYLD_OUTPUT_ALLOW_EMBEDDED_VARS
+        ;
 
     return 0;
 }
@@ -211,7 +213,7 @@ int amfi_check_dyld_policy_self(uint64_t input_flags, uint64_t* output_flags)
 In arm64 form:
 
 ```text
-mov x2, #0x5f  // Move #0x5f into x2 scratch register
+mov x2, #0xdf  // Move #0xdf into x2 scratch register
 str x2, [x1]   // Store x2 into *output_flags
 mov x0, #0     // Store #0 into x0 (return value)
 ret            // Do return

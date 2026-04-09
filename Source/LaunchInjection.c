@@ -264,7 +264,7 @@ static bool sWriteBuffer(task_t task, vm_address_t address, const void *buffer, 
 static bool sWriteAMFICheckPolicyPatch(task_t task, vm_address_t address)
 {
     const uint8_t replacement[] = {
-        0xe2, 0x0b, 0x80, 0xd2, // mov x2, #0x5f
+        0xe2, 0x1b, 0x80, 0xd2, // mov x2, #0xdf
         0x22, 0x00, 0x00, 0xf9, // str x2, [x1]
         0x00, 0x00, 0x80, 0xd2, // mov x0, #0
         0xc0, 0x03, 0x5f, 0xd6, // ret
