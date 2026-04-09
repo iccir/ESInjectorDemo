@@ -40,6 +40,7 @@ bool LaunchInjectionInjectLibrary(pid_t pid, const char *libraryPath);
 /*
     Advanced API, allows finer-grained manipulation of environmental variables.
     Each InjectionVariable parameter should be terminated with { NULL, NULL }.
+    An InjectionVariable with a NULL value but non-NULL key is ignored.
 */
 typedef struct LaunchInjectionVariable {
     const char *key;

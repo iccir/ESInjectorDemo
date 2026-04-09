@@ -603,7 +603,12 @@ static bool sModifyStack(
     };
 
     __auto_type processVariables = ^(StackList *list, const LaunchInjectionVariable *variable, const char *formatString) {
-        while (variable && variable->key && variable->value) {
+        while (variable && variable->key) {
+            if (!variable->value) {
+                variable++;
+                continue;
+            }
+
             StackString *string = getStringWithKey(list, variable->key);
             
             if (string) {
